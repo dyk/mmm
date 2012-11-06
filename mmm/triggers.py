@@ -10,7 +10,6 @@ class Triggers(object):
     def __init__(self, connection, checkpoint):
         self._conn = connection
         self._oplog = self._conn.local.oplog.rs
-        self._oplog.ensure_index('ts')
         self._callbacks = defaultdict(list)
         self.checkpoint = checkpoint
 
@@ -19,7 +18,7 @@ class Triggers(object):
             yield self.checkpoint
             spec = dict(ts={'$gt': self.checkpoint})
             q = self._oplog.find(
-                spec, tailable=True, await_data=True)
+                spec, tailable=True, await_data=True, oplog_replay=True)
             found=False
             # log.debug('Query on %s', self._oplog)
             for op in q.sort('$natural'):
