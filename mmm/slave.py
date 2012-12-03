@@ -3,8 +3,9 @@ import time
 import uuid
 import logging
 
+import bson
 import gevent
-
+#import pprint
 from .triggers import Triggers
 
 log = logging.getLogger(__name__)
@@ -27,9 +28,8 @@ class ReplicationSlave(object):
     }
     '''
 
-    def __init__(self, topology, name, connect=None, timestamp=None):
+    def __init__(self, topology, name, connect=None):
         if connect: self.connect = connect
-        if timestamp: self.timestamp = timestamp
         self._topology = topology
         self.name = name
         topo = topology[name]
@@ -41,6 +41,7 @@ class ReplicationSlave(object):
         self._coll = self._conn.local[MMM_DB_NAME]
         self._config = {}
         self._greenlets = []
+        self._master_checkpoint = None
 
     def connect(self, *args, **kwargs):
         '''Connect to a mongod server. Factored into a method so we can delay
@@ -50,14 +51,6 @@ class ReplicationSlave(object):
         from pymongo import Connection
         return Connection(*args, **kwargs)
 
-    def timestamp(self, *args, **kwargs):
-        '''Create a bson.Timestamp. Factored into a method so we can delay
-        importing socket until gevent.monkey.patch_all() is called. You could
-        also insert another timestamp function to set options if you so desire.
-        '''
-        import bson
-        return bson.Timestamp(*args, **kwargs)
-        
     def start(self, checkpoint=None):
         for gl in self._greenlets:
             gl.kill()
@@ -70,12 +63,21 @@ class ReplicationSlave(object):
                     self.replicate, master_uri, checkpoint))
 
     def load_config(self):
+        from pymongo import Connection
         self._config = {}
         name_by_id = dict(
             (sconf['id'], name)
             for name, sconf in self._topology.items())
         for master in self._coll.find():
-            self._config[name_by_id[master['_id']]] = master
+            if master['_id'] != 'master_checkpoint':
+                self._config[name_by_id[master['_id']]] = master
+
+                master_uri = self._topology[name_by_id[master['_id']]]['uri']
+                conn = Connection(master_uri)
+                coll = conn.local[MMM_DB_NAME]
+                for cp in coll.find(dict(_id='master_checkpoint')):
+                    self._master_checkpoint = cp['ts']
+                conn.disconnect()
 
     def clear_config(self):
         self._config = {}
@@ -139,7 +141,7 @@ class ReplicationSlave(object):
             checkpoint = master_repl_config.get('checkpoint')
         if checkpoint is None:
             # By default, start replicating as of NOW
-            checkpoint = self.timestamp(long(time.time()), 0)
+            checkpoint = bson.Timestamp(long(time.time()), 0)
         triggers = Triggers(conn, checkpoint)
         for repl in master_repl_config['replication']:
             triggers.register(
@@ -159,7 +161,7 @@ class ReplicationSlave(object):
             src_id = uuid.UUID(src_id)
         db, cname = dst.split('.', 1)
         collection = self._conn[db][cname]
-        def trigger(ts, h, op, ns, o, o2=None, b=False):
+        def trigger(ts, h, op, ns, o, v, o2=None, b=False):
             log.info('%s <= %s: %s %s', self.id, src_id, op, ns)
             if op == 'i':
                 if o.get(MMM_REPL_FLAG) == self.id:

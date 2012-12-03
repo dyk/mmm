@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 import gevent.monkey
 gevent.monkey.patch_all()
 
@@ -6,11 +6,11 @@ import json
 import bson
 import argparse
 import logging.config
-
+#import pprint
 import yaml
+import time
 
 def main():
-    global log
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '-l', '--logging', dest='logging', default=None,
@@ -109,12 +109,33 @@ def run_replicate(config, servers, args):
 def run_main(config, servers, args):
     log = logging.getLogger('mmm')
     for s in servers.values():
-        s.start()
+        s.start(s._master_checkpoint)
+
+    masters = {}
+    for name,s in servers.items():
+        for master in s._coll.find():
+            if master['_id'] != 'master_checkpoint':
+                masters[master['_id']] = True
+
+    for name,s in servers.items():
+        try:
+            if masters[s._topology[name]['id']] == True:
+                masters[s._topology[name]['id']] = s
+        except:
+            True
+
+#    pprint.pprint('masters output')
+#    for name,m in masters.items():
+#        pprint.pprint(name)
+#        pprint.pprint(m._coll)
+#    pprint.pprint('masters output')
+    
     while True:
         gevent.sleep(5)
+        ts = bson.Timestamp(long(time.time()), 1)
         log.info('=== mark ===')
-
-
+        for name,m in masters.items():
+            m._coll.update( dict(_id="master_checkpoint"), { '$set': { 'ts': ts } }, upsert=True )
     
 
     
