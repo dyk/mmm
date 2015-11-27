@@ -55,12 +55,17 @@ class ReplicationSlave(object):
         for gl in self._greenlets:
             gl.kill()
         self.load_config()
-        self._greenlets = [
-            gevent.spawn_link_exception(self.periodic_checkpoint, 5) ]
+
+        def exception_callback(greenlet):
+            log.exception("Exception happened in %s", greenlet)
+
+        self._greenlets = [gevent.spawn(self.periodic_checkpoint, 5)]
+        self._greenlets[-1].link_exception(exception_callback)
+
         for master_uri in self._config:
-            self._greenlets.append(
-                gevent.spawn_link_exception(
-                    self.replicate, master_uri, checkpoint))
+            self._greenlets.append(gevent.spawn(self.replicate, master_uri, checkpoint))
+            self._greenlets[-1].link_exception(exception_callback)
+
 
     def load_config(self):
         from pymongo import Connection
