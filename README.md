@@ -11,7 +11,10 @@ document replicated with its source.
 
 To install, use pip:
 
-    pip install MongoMultiMaster
+	sudo apt-get install python-yaml python-gevent
+	cd mmm
+	python setup.py sdist
+    sudo pip install dist/MongoMultiMaster-0.0.4dev.tar.gz
     
 ## MongoDB Setup
 
